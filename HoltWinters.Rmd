@@ -1,0 +1,126 @@
+---
+title: "Project_part3"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+library(lmtest)
+library(forecast)
+library(vars)
+library(tseries)
+```
+
+
+```{r}
+# Get the data
+setwd("/Users/minchenwang/classes/604/project")
+df1 <- read.csv("train.csv", header=T)
+df2 <- read.csv("test.csv", header=T)
+full_ts <- ts(df1$Bankruptcy_Rate, frequency = 12)
+```
+
+As Adam did, split the last three years for the test data.
+```{r}
+n_months <- 36
+train <- ts(df1$Bankruptcy_Rate[1:(nrow(df1)- n_months)], frequency = 12)
+test <- ts(df1$Bankruptcy_Rate[(nrow(df1)- n_months + 1):nrow(df1)],
+frequency = 12, start = nrow(df1)/12 - n_months/12 +1)
+plot(train, xlim = c(1,29))
+lines(test, col = 'blue')
+```
+
+# Auto Arima Model
+
+Use Box-Jenkins Methodology to do the data transformation
+```{r}
+lambda <- BoxCox.lambda(train)
+train_trans <- (train^lambda-1)/lambda
+```
+
+Check how many time differences is necessary
+```{r}
+print(ndiffs(train_trans))
+print(ndiffs(train_trans,m=12))
+```
+
+```{r}
+# differencing once
+dtrain_trans <- diff(train_trans)
+# differencing for monthly seasonality
+dtrain_trans.12 <- diff(dtrain_trans, lag=12)
+# check the stationary
+adf.test(dtrain_trans.12)
+```
+```{r}
+plot(dtrain_trans.12)
+```
+
+Find auto.arima() recommendation for the seires
+```{r}
+m.aut <- auto.arima(y = train_trans, d = 1, D = 1, allowdrift = F)
+summary(m.aut)
+```
+
+Draw the auto-arima forecast plot
+```{r}
+m <- arima(train_trans, order=c(2,1,3), seasonal = list(order = c(2,1,2), period = 12), method="CSS-ML")
+fit <- ((train_trans - m$residuals)*lambda + 1)^(1/lambda)
+plot(train, type = "l", main = "Bankruptcy Rate", xlim=c(0,28),ylim=c(0,6))
+t1 <- time(train)
+points(t1, fit, type = "l", col = "red")
+f.aut <- forecast(object = m, h = 36, level = 0.95)
+point <- ((f.aut$mean)*lambda + 1)^(1/lambda)
+lower <- ((f.aut$lower)*lambda + 1)^(1/lambda)
+upper <- ((f.aut$upper)*lambda + 1)^(1/lambda)
+abline(v=26,col='blue',lty=2)
+t2 <- time(test)
+polygon(c(t2, rev(t2)), c(upper, rev(lower)), col = "grey90", border = NA)
+points(point~t2, type='l', col='red')
+points(test[1:36]~t2, type='l', col='black')
+legend("topleft", legend = c("Observed", "Predicted", "Interval"),
+       lty = 1, lwd = c(1,1,10), col = c("black", "red", "grey90"), cex = 1)
+```
+
+
+auto-arima RMSE
+```{r}
+accuracy(f.aut,test)
+```
+
+RMSE = 2.01684849
+\newpage
+
+## Holt-Winters Methodology
+
+```{r}
+m.hw <- HoltWinters(x = train, seasonal = "multi")
+m.hw
+```
+
+Draw the Holt-Winters forecast plot
+```{r}
+f.hw <- forecast(m.hw, h = 36, level = 0.95)
+plot(train, type = "l", main = "Bankruptcy Rate", xlim=c(0,28),ylim=c(0,6))
+lines(m.hw$fitted[,1], col = "red", lwd = 1.5)
+t1 <- time(train)
+point <- f.hw$mean
+lower <- f.hw$lower
+upper <- f.hw$upper
+abline(v=26,col='blue',lty=2)
+t2 <- time(test)
+polygon(c(t2, rev(t2)), c(upper, rev(lower)), col = "grey90", border = NA)
+points(point~t2, type='l', col='red')
+points(test[1:36]~t2, type='l', col='black')
+legend("topleft", legend = c("Observed", "Predicted", "Interval"),
+       lty = 1, lwd = c(1,1,10), col = c("black", "red", "grey90"), cex = 1)
+```
+
+??? I don't know why the interval exploded into so large after 27.
+
+Holt-Winters RMSE
+```{r}
+accuracy(f.hw,test)
+```
+The Holt-Winters RMSE=0.3006421 looks good.

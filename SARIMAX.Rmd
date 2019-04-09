@@ -1,0 +1,212 @@
+---
+title: "Project_part3"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+library(lmtest)
+library(forecast)
+library(vars)
+library(tseries)
+```
+
+
+```{r}
+# Get the data
+setwd("/Users/minchenwang/classes/604/project")
+df1 <- read.csv("train.csv", header=T)
+df2 <- read.csv("test.csv", header=T)
+full_ts <- ts(df1$Bankruptcy_Rate, frequency = 12)
+```
+
+As Adam did, split the last three years for the test data.
+```{r}
+n_months <- 36
+df1_train <- df1[1:(nrow(df1)- n_months),]
+df1_test <- df1[(nrow(df1)- n_months + 1):nrow(df1),]
+train <- ts(df1_train$Bankruptcy_Rate, frequency = 12)
+test <- ts(df1_test$Bankruptcy_Rate,frequency = 12, start = nrow(df1)/12 - n_months/12 +1)
+Unemployment_Rate <- ts(df1_train$Unemployment_Rate, frequency = 12)
+Population <- ts(df1_train$Population, frequency = 12)
+House_Price_Index <- ts(df1_train$House_Price_Index, frequency = 12)
+Unemployment_Rate_test <- ts(df1_test$Unemployment_Rate, frequency = 12, start = nrow(df1)/12 - n_months/12 +1)
+Population_test <- ts(df1_test$Population, frequency = 12, start = nrow(df1)/12 - n_months/12 +1)
+House_Price_Index_test <- ts(df1_test$House_Price_Index, frequency = 12, start = nrow(df1)/12 - n_months/12 +1)
+plot(train, xlim = c(1,29))
+lines(test, col = 'blue')
+```
+
+
+```{r}
+m.hw <- HoltWinters(x = train, seasonal = "multi")
+f.hw <- forecast(m.hw, h = 36, level = 0.95)
+```
+
+
+
+```{r}
+par(mfrow=c(3,1))
+plot(ts(df1$Unemployment_Rate,frequency = 12))
+plot(ts(df1$Population,frequency = 12))
+plot(ts(df1$House_Price_Index,frequency = 12))
+```
+
+# SARIMAX Model
+
+Use Box-Jenkins Methodology to do the data transformation
+```{r}
+lambda <- BoxCox.lambda(train)
+train_trans <- (train^lambda-1)/lambda
+plot(train_trans)
+```
+
+check the heteroscedasticity
+```{r}
+bptest(lm(train_trans~time(train_trans)))
+```
+pass
+
+
+Check how many time differences is necessary
+```{r}
+print(ndiffs(train_trans))
+print(nsdiffs(train_trans))
+```
+
+```{r}
+# differencing once
+dtrain_trans <- diff(train_trans)
+adf.test(dtrain_trans)
+```
+stationary pass
+
+```{r}
+plot(dtrain_trans)
+```
+
+```{r}
+par(mfrow=c(2,1))
+acf(dtrain_trans, lag.max = 144)
+pacf(dtrain_trans, lag.max = 72)
+```
+
+
+```{r}
+par(mfrow=c(2,1))
+ccf(ts(train_trans[19:336],frequency=12), ts(full_unemploy[1:318],frequency=12))
+ccf(ts(train_trans[13:336],frequency=12), ts(full_unemploy[1:324],frequency=12))
+ccf(train_trans, Population)
+ccf(train_trans, House_Price_Index)
+```
+
+find best arima
+```{r}
+p_vec <- c()
+q_vec <- c()
+P_vec <- c()
+Q_vec <- c()
+rmse_vec <- c()
+loglik_vec <- c()
+for (p in 2:6){
+  for (q in 2:6){
+    for (P in 1:6){
+      for (Q in 1:6){
+        # print(paste(p,q,P,Q))
+        model <- Arima(train,lambda = lambda, method = "CSS",order = c(p,1,q),seasonal = list(order = c(P,0,Q), period = 12))
+        fore <- forecast(model, h=n_months)
+        p_vec <- append(p_vec, p)
+        q_vec <- append(q_vec, q)
+        P_vec <- append(P_vec, P)
+        Q_vec <- append(Q_vec, Q)
+        rmse <- accuracy(fore,test)[2,2]
+        loglik_vec <- append(loglik_vec, model$loglik)
+        rmse_vec <- append(rmse_vec, rmse)
+      }
+    }
+  }
+}
+d_sarima <- data.frame(p_vec,q_vec,P_vec,Q_vec,loglik_vec, rmse_vec)
+
+```
+```{r}
+m1 <- Arima(train, order =c(5,1,5), seasonal =list(order =c(1,0,2), period = 12), lambda =lambda, method = 'CSS')
+summary(m1)
+```
+
+```{r}
+f1 <- forecast(m1, h=n_months, level = 0.95)
+accuracy(f1,test)
+```
+
+```{r}
+# build ARIMA model
+m2 <- Arima(train, order =c(5,1,6), seasonal =list(order =c(1,0,2), period = 12), lambda =lambda, method = 'CSS')
+summary(m2)
+```
+
+```{r}
+f2 <- forecast(m2, h=n_months, level = 0.95)
+accuracy(f2,test)
+```
+
+```{r}
+# build ARIMA model
+m3 <- Arima(train, order =c(6,1,4), seasonal =list(order =c(1,0,4), period = 12), lambda =lambda, method = 'CSS')
+summary(m3)
+```
+
+```{r}
+f3 <- forecast(m3, h=n_months, level = 0.95)
+accuracy(f3,test)
+```
+
+
+
+```{r}
+# test on whole train data
+lambda <- BoxCox.lambda(full_ts)
+model <- Arima(full_ts, order =c(5,1,6), seasonal =list(order =c(1,0,2), period = 12), lambda =lambda, method = 'CSS')
+summary(model)
+```
+```{r}
+f <- forecast(model, h=36, level = 0.95)
+```
+
+
+
+```{r}
+# plot forecast
+fit <- ((train_trans - m1$residuals)*lambda + 1)^(1/lambda)
+plot(train, type = "l", main = "Bankruptcy Rate", xlim=c(0,28),ylim=c(0,6))
+t1 <- time(train)
+points(t1, fit, type = "l", col = "red")
+point <- f1$mean
+lower <- f1$lower
+upper <- f1$upper
+abline(v=26,col='blue',lty=2)
+t2 <- time(test)
+polygon(c(t2, rev(t2)), c(upper, rev(lower)), col = "grey90", border = NA)
+points(point~t2, type='l', col='red')
+points(test[1:36]~t2, type='l', col='black')
+legend("topleft", legend = c("Observed", "Predicted", "Interval"),
+       lty = 1, lwd = c(1,1,10), col = c("black", "red", "grey90"), cex = 1)
+```
+
+```{r}
+# try SARIMAX but not works better
+m2 <- Arima(train, order =c(5,1,5), seasonal =list(order =c(1,0,2), period = 12), lambda =lambda, method = 'CSS',xreg = data.frame(Population))
+summary(m2)
+```
+
+```{r}
+f2 <- forecast(m2, h=n_months,xreg = data.frame(Population_test))
+accuracy(f2,test)
+```
+
+```{r}
+m.var <- VAR(y = data.frame(train, Unemployment_Rate, House_Price_Index, Population), p = 5)
+forecast_var <-predict(m.var, n.ahead = 36, ci = 0.95)
+```
+
